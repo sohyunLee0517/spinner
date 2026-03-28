@@ -315,13 +315,40 @@ function lightenHex(hex, amt) {
   return rgbToHex(r + amt, g + amt, b + amt);
 }
 
+function hexToRgba(hex, a) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/** 추마다 네온이 겹치도록 번짐 — 끝이 한 덩어리처럼 보이게 */
+function drawMergedNeonGlow(cx, cy, baseR, wc, colors, n) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  wc.forEach((p, wi) => {
+    const col = colors[wi % n] || "#00f5d4";
+    const wx = cx + p.x * baseR;
+    const wy = cy + p.y * baseR;
+    const wr = (p.r || 0.11) * baseR;
+    const rMax = wr * 3.4;
+    const grd = ctx.createRadialGradient(wx, wy, wr * 0.15, wx, wy, rMax);
+    grd.addColorStop(0, hexToRgba(col, 0.5));
+    grd.addColorStop(0.4, hexToRgba(col, 0.24));
+    grd.addColorStop(0.75, hexToRgba(col, 0.09));
+    grd.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.beginPath();
+    ctx.arc(wx, wy, rMax, 0, TAU);
+    ctx.fillStyle = grd;
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
 const canvas = document.getElementById("wheel");
 const ctx = canvas.getContext("2d");
 const shapeSelect = document.getElementById("shapeSelect");
 const shapeHint = document.getElementById("shapeHint");
 const colorList = document.getElementById("colorList");
 const spinBtn = document.getElementById("spinBtn");
-const resultEl = document.getElementById("result");
 
 let currentShape = SHAPES[0];
 let colors = [];
@@ -335,15 +362,7 @@ function ensureColors(n) {
   colors.length = n;
 }
 
-/** 팔 중심부에 맞춘 구역: 포인터(위쪽)가 그 구역의 중심각 근처에 오도록 */
-function winningIndex(rot, n) {
-  let t = (-Math.PI / 2 - rot) % TAU;
-  if (t < 0) t += TAU;
-  const rel = (t + Math.PI / 2) % TAU;
-  return Math.floor((rel + TAU / (2 * n)) / (TAU / n)) % n;
-}
-
-/** 끝 추(베어링) 원 — 안쪽은 메탈, 색은 바깥 테두리 링에만 */
+/** 끝 추(베어링) — 메탈 디스크 + 링(아래 번짐과 합쳐져 한 줄 네온처럼 보이게) */
 function drawBearingRing(wx, wy, rOuter, color, baseR) {
   ctx.beginPath();
   ctx.arc(wx, wy, rOuter * 0.86, 0, TAU);
@@ -361,22 +380,31 @@ function drawBearingRing(wx, wy, rOuter, color, baseR) {
   ctx.fillStyle = g;
   ctx.fill();
 
-  const ringW = Math.max(3.2, baseR * 0.038);
+  const ringW = Math.max(2.8, baseR * 0.032);
   ctx.beginPath();
   ctx.arc(wx, wy, rOuter * 0.9, 0, TAU);
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = hexToRgba(color, 0.92);
   ctx.lineWidth = ringW;
   ctx.lineJoin = "round";
   ctx.shadowColor = color;
-  ctx.shadowBlur = 22;
+  ctx.shadowBlur = 38;
   ctx.stroke();
   ctx.shadowBlur = 0;
 
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.beginPath();
+  ctx.arc(wx, wy, rOuter * 0.9, 0, TAU);
+  ctx.strokeStyle = hexToRgba(color, 0.28);
+  ctx.lineWidth = ringW * 2.4;
+  ctx.stroke();
+  ctx.restore();
+
   ctx.beginPath();
   ctx.arc(wx, wy, rOuter * 0.82, 0, TAU);
-  ctx.strokeStyle = lightenHex(color, 65);
-  ctx.lineWidth = 1.2;
-  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = lightenHex(color, 55);
+  ctx.lineWidth = 1.1;
+  ctx.globalAlpha = 0.45;
   ctx.stroke();
   ctx.globalAlpha = 1;
 
@@ -470,6 +498,13 @@ function renderWheel() {
   ctx.shadowBlur = 0;
   ctx.restore();
 
+  const wc = weightOutlineCenters(currentShape, disks);
+  ctx.save();
+  traceSilhouette(ctx, cx, cy, baseR, disks);
+  ctx.clip();
+  drawMergedNeonGlow(cx, cy, baseR, wc, colors, n);
+  ctx.restore();
+
   const hubR = baseR * 0.12;
   const g = ctx.createRadialGradient(
     cx - hubR * 0.2,
@@ -492,7 +527,6 @@ function renderWheel() {
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  const wc = weightOutlineCenters(currentShape, disks);
   wc.forEach((p, wi) => {
     const wr = (p.r || 0.11) * baseR;
     const col = colors[wi % n] || "#00f5d4";
@@ -591,10 +625,21 @@ function equalSplit() {
   renderWheel();
 }
 
-/** 빠르게 돌다가 마지막에 길게 서서히 멈추는 느낌 (스피너·뽑기용) */
-function easeOutExpo(t) {
+/**
+ * 앞은 등각속(선형), 멈춤 구간은 각속도가 시간에 선형으로 줄어듦 = 일정한 각가속도(감속).
+ * 그래서 “같은 속도로” 서서히 줄어드는 느낌(지수 ease와 달리 감속률 일정).
+ */
+function easeFastLinearSlowEnd(t) {
   if (t >= 1) return 1;
-  return 1 - Math.pow(2, -10 * t);
+  const split = 0.2;
+  const done = 0.74;
+  if (t <= split) {
+    return (t / split) * done;
+  }
+  const v = (t - split) / (1 - split);
+  const tail = 1 - done;
+  const tailEase = 2 * v - v * v;
+  return done + tail * tailEase;
 }
 
 function spin() {
@@ -607,12 +652,12 @@ function spin() {
   const targetRot = rotation + extra * TAU + Math.random() * TAU;
   const start = rotation;
   const delta = targetRot - start;
-  const duration = 5200 + Math.random() * 2200;
+  const duration = 5600 + Math.random() * 3200;
   const t0 = performance.now();
 
   function frame(now) {
     const u = Math.min(1, (now - t0) / duration);
-    rotation = start + delta * easeOutExpo(u);
+    rotation = start + delta * easeFastLinearSlowEnd(u);
     renderWheel();
     if (u < 1) {
       requestAnimationFrame(frame);
@@ -621,7 +666,6 @@ function spin() {
       renderWheel();
       spinning = false;
       spinBtn.disabled = false;
-      const idx = winningIndex(rotation, n);
     }
   }
 
