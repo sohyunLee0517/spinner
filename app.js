@@ -626,13 +626,13 @@ function equalSplit() {
 }
 
 /**
- * 앞은 등각속(선형), 멈춤 구간은 각속도가 시간에 선형으로 줄어듦 = 일정한 각가속도(감속).
- * 그래서 “같은 속도로” 서서히 줄어드는 느낌(지수 ease와 달리 감속률 일정).
+ * 앞: 등각속(선형). 뒤: 각속도 선형 감소(2v−v²) = 일정 각감속.
+ * split·done은 경계에서 기울기 연속: done/split = 2(1−done)/(1−split) → done = 2·split/(1+split)
  */
 function easeFastLinearSlowEnd(t) {
   if (t >= 1) return 1;
-  const split = 0.2;
-  const done = 0.74;
+  const split = 0.11;
+  const done = (2 * split) / (1 + split);
   if (t <= split) {
     return (t / split) * done;
   }
@@ -642,22 +642,31 @@ function easeFastLinearSlowEnd(t) {
   return done + tail * tailEase;
 }
 
+/**
+ * 실제 시간 u에 대해 w = 1−(1−u)⁴ 로 안쪽으로 당겨서 E(w)에 넣음.
+ * F′(0) = E′(0)·4 이라 같은 E로도 첫 순간 각속도만 약 4배 (총 시간은 그대로).
+ */
+function easeWarpFastStart(u) {
+  if (u >= 1) return 1;
+  const w = 1 - Math.pow(1 - u, 4);
+  return easeFastLinearSlowEnd(w);
+}
+
 function spin() {
   if (spinning) return;
   spinning = true;
   spinBtn.disabled = true;
 
-  const n = currentShape.segments;
   const extra = 7 + Math.floor(Math.random() * 6);
   const targetRot = rotation + extra * TAU + Math.random() * TAU;
   const start = rotation;
   const delta = targetRot - start;
-  const duration = 5600 + Math.random() * 3200;
+  const duration = 5200 + Math.random() * 3800;
   const t0 = performance.now();
 
   function frame(now) {
     const u = Math.min(1, (now - t0) / duration);
-    rotation = start + delta * easeFastLinearSlowEnd(u);
+    rotation = start + delta * easeWarpFastStart(u);
     renderWheel();
     if (u < 1) {
       requestAnimationFrame(frame);
