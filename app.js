@@ -601,7 +601,6 @@ function spin() {
   if (spinning) return;
   spinning = true;
   spinBtn.disabled = true;
-  resultEl.textContent = "뽑는 중…";
 
   const n = currentShape.segments;
   const extra = 7 + Math.floor(Math.random() * 6);
